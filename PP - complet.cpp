@@ -1,0 +1,605 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+// For getch() equivalent on Linux/Mac
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+int getch(void) {
+    struct termios oldattr, newattr;
+    int ch;
+    tcgetattr(STDIN_FILENO, &oldattr);
+    newattr = oldattr;
+    newattr.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newattr);
+    ch = getchar();
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldattr);
+    return ch;
+}
+#endif
+
+#define MAX_ACCOUNTS 100
+#define MAX_NAME_LENGTH 50
+#define FILENAME "bank_data.txt"
+
+// ANSI color codes
+#define COLOR_RED "\x1B[31m"
+#define COLOR_GREEN "\x1B[32m"
+#define COLOR_YELLOW "\x1B[33m"
+#define COLOR_BLUE "\x1B[34m"
+#define COLOR_CYAN "\x1B[36m"
+#define COLOR_RESET "\x1B[0m"
+
+typedef struct {
+    int accountNumber;
+    char clientName[MAX_NAME_LENGTH];
+    float balance;
+    char lastTransactionDate[11]; // dd/mm/yyyy format
+} BankAccount;
+
+BankAccount accounts[MAX_ACCOUNTS];
+int accountCount = 0;
+
+void clearScreen() {
+    #ifdef _WIN32
+        system("cls");
+    #else
+        system("clear");
+    #endif
+}
+
+void displayHeader(const char* title) {
+    clearScreen();
+    printf(COLOR_CYAN "=== %s ===\n" COLOR_RESET, title);
+}
+
+void displayMainMenu() {
+    displayHeader("Banking Record System");
+
+    printf(COLOR_YELLOW "1. " COLOR_RESET "Display accounts\n");
+    printf(COLOR_YELLOW "2. " COLOR_RESET "Add new account\n");
+    printf(COLOR_YELLOW "3. " COLOR_RESET "Delete account\n");
+    printf(COLOR_YELLOW "4. " COLOR_RESET "Deposit amount\n");
+    printf(COLOR_YELLOW "5. " COLOR_RESET "Withdraw amount\n");
+    printf(COLOR_YELLOW "6. " COLOR_RESET "Search account\n");
+    printf(COLOR_YELLOW "7. " COLOR_RESET "View transaction file\n");
+    printf(COLOR_YELLOW "8. " COLOR_RESET "Save and exit\n");
+
+    printf(COLOR_GREEN "\nSelect option: " COLOR_RESET);
+}
+
+int isValidDate(const char* date) {
+    if (strlen(date) != 10) return 0;
+    if (date[2] != '/' || date[5] != '/') return 0;
+
+    for (int i = 0; i < 10; i++) {
+        if (i == 2 || i == 5) continue;
+        if (!isdigit(date[i])) return 0;
+    }
+
+    int day = atoi(date);
+    int month = atoi(date + 3);
+    int year = atoi(date + 6);
+
+    if (day < 1 || day > 31) return 0;
+    if (month < 1 || month > 12) return 0;
+    if (year < 1900 || year > 2100) return 0;
+
+    return 1;
+}
+
+void saveAccountsToFile() {
+    FILE *file = fopen(FILENAME, "w");
+    if (file == NULL) {
+        printf(COLOR_RED "Error opening file for writing!\n" COLOR_RESET);
+        return;
+    }
+
+    for (int i = 0; i < accountCount; i++) {
+        fprintf(file, "%d,%s,%.2f,%s\n",
+                accounts[i].accountNumber,
+                accounts[i].clientName,
+                accounts[i].balance,
+                accounts[i].lastTransactionDate);
+    }
+
+    fclose(file);
+}
+
+void loadAccountsFromFile() {
+    FILE *file = fopen(FILENAME, "r");
+    if (file == NULL) {
+        file = fopen(FILENAME, "w");
+        if (file) fclose(file);
+        return;
+    }
+
+    accountCount = 0;
+    char line[150];
+
+    while (fgets(line, sizeof(line), file) && accountCount < MAX_ACCOUNTS) {
+        line[strcspn(line, "\n")] = '\0';
+
+        char *token = strtok(line, ",");
+        if (token == NULL) continue;
+        accounts[accountCount].accountNumber = atoi(token);
+
+        token = strtok(NULL, ",");
+        if (token == NULL) continue;
+        strncpy(accounts[accountCount].clientName, token, MAX_NAME_LENGTH);
+
+        token = strtok(NULL, ",");
+        if (token == NULL) continue;
+        accounts[accountCount].balance = atof(token);
+
+        token = strtok(NULL, ",");
+        if (token == NULL) strcpy(accounts[accountCount].lastTransactionDate, "01/01/2000");
+        else strncpy(accounts[accountCount].lastTransactionDate, token, 11);
+
+        accountCount++;
+    }
+
+    fclose(file);
+}
+
+void displayAccounts() {
+    displayHeader("Account List");
+
+    if (accountCount == 0) {
+        printf(COLOR_RED "No accounts registered.\n" COLOR_RESET);
+    } else {
+        printf(COLOR_BLUE "No. | Account No. | Client Name       | Balance   | Last Transaction\n");
+        printf("----|------------|-------------------|-----------|------------------\n" COLOR_RESET);
+
+        for (int i = 0; i < accountCount; i++) {
+            printf("%3d | ", i+1);
+            printf(COLOR_YELLOW "%10d" COLOR_RESET, accounts[i].accountNumber);
+            printf(" | ");
+            printf(COLOR_GREEN "%-17s" COLOR_RESET, accounts[i].clientName);
+            printf(" | ");
+            printf(COLOR_CYAN "%9.2f" COLOR_RESET, accounts[i].balance);
+            printf(" | ");
+            printf(COLOR_YELLOW "%s" COLOR_RESET, accounts[i].lastTransactionDate);
+            printf("\n");
+        }
+    }
+
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void addAccount() {
+    displayHeader("Add New Account");
+
+    if (accountCount >= MAX_ACCOUNTS) {
+        printf(COLOR_RED "Maximum number of accounts reached.\n" COLOR_RESET);
+        printf("\nPress any key to continue...");
+        getch();
+        return;
+    }
+
+    BankAccount newAccount;
+    char dateInput[11];
+
+    while (1) {
+        printf("Enter account number (6 digits): ");
+        if (scanf("%d", &newAccount.accountNumber) != 1) {
+            printf(COLOR_RED "Invalid input! Please enter a number.\n" COLOR_RESET);
+            while (getchar() != '\n');
+            continue;
+        }
+
+        if (newAccount.accountNumber < 100000 || newAccount.accountNumber > 999999) {
+            printf(COLOR_RED "Account number must be 6 digits!\n" COLOR_RESET);
+            continue;
+        }
+
+        int exists = 0;
+        for (int i = 0; i < accountCount; i++) {
+            if (accounts[i].accountNumber == newAccount.accountNumber) {
+                exists = 1;
+                break;
+            }
+        }
+
+        if (exists) {
+            printf(COLOR_RED "Account number already exists!\n" COLOR_RESET);
+        } else {
+            break;
+        }
+    }
+
+    printf("Enter client name: ");
+    scanf(" %[^\n]", newAccount.clientName);
+
+    while (1) {
+        printf("Enter initial balance (minimum 100 RON): ");
+        if (scanf("%f", &newAccount.balance) != 1) {
+            printf(COLOR_RED "Invalid input! Please enter a number.\n" COLOR_RESET);
+            while (getchar() != '\n');
+            continue;
+        }
+
+        if (newAccount.balance < 100) {
+            printf(COLOR_RED "Minimum initial balance is 100 RON!\n" COLOR_RESET);
+        } else {
+            break;
+        }
+    }
+
+    while (1) {
+        printf("Enter last transaction date (dd/mm/yyyy): ");
+        scanf("%s", dateInput);
+
+        if (isValidDate(dateInput)) {
+            strcpy(newAccount.lastTransactionDate, dateInput);
+            break;
+        } else {
+            printf(COLOR_RED "Invalid date format! Please use dd/mm/yyyy format.\n" COLOR_RESET);
+        }
+    }
+
+    accounts[accountCount++] = newAccount;
+    saveAccountsToFile();
+
+    printf(COLOR_GREEN "\nAccount added successfully!\n" COLOR_RESET);
+    printf("Data saved to " COLOR_YELLOW "%s\n" COLOR_RESET, FILENAME);
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void deleteAccount() {
+    displayHeader("Delete Account");
+
+    if (accountCount == 0) {
+        printf(COLOR_RED "No accounts available to delete.\n" COLOR_RESET);
+        printf("\nPress any key to continue...");
+        getch();
+        return;
+    }
+
+    int accountNumber;
+    printf("Enter account number to delete: ");
+    scanf("%d", &accountNumber);
+
+    int foundIndex = -1;
+    for (int i = 0; i < accountCount; i++) {
+        if (accounts[i].accountNumber == accountNumber) {
+            foundIndex = i;
+            break;
+        }
+    }
+
+    if (foundIndex == -1) {
+        printf(COLOR_RED "Account not found!\n" COLOR_RESET);
+    } else {
+        printf(COLOR_GREEN "Account found: %s (Balance: %.2f RON)\n" COLOR_RESET,
+               accounts[foundIndex].clientName, accounts[foundIndex].balance);
+
+        printf("Are you sure you want to delete this account? (y/n): ");
+        char confirm;
+        scanf(" %c", &confirm);
+
+        if (tolower(confirm) == 'y') {
+            for (int i = foundIndex; i < accountCount - 1; i++) {
+                accounts[i] = accounts[i + 1];
+            }
+            accountCount--;
+
+            saveAccountsToFile();
+
+            printf(COLOR_GREEN "Account deleted successfully!\n" COLOR_RESET);
+        } else {
+            printf(COLOR_YELLOW "Deletion canceled.\n" COLOR_RESET);
+        }
+    }
+
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void depositAmount() {
+    displayHeader("Deposit Amount");
+
+    if (accountCount == 0) {
+        printf(COLOR_RED "No accounts available.\n" COLOR_RESET);
+        printf("\nPress any key to continue...");
+        getch();
+        return;
+    }
+
+    int accountNumber;
+    float amount;
+    char dateInput[11];
+
+    printf("Enter account number: ");
+    scanf("%d", &accountNumber);
+
+    int found = -1;
+    for (int i = 0; i < accountCount; i++) {
+        if (accounts[i].accountNumber == accountNumber) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found == -1) {
+        printf(COLOR_RED "Account not found!\n" COLOR_RESET);
+    } else {
+        printf(COLOR_CYAN "Account holder: %s\n", accounts[found].clientName);
+        printf("Current balance: %.2f RON\n" COLOR_RESET, accounts[found].balance);
+
+        while (1) {
+            printf("Enter amount to deposit: ");
+            if (scanf("%f", &amount) != 1) {
+                printf(COLOR_RED "Invalid input! Please enter a number.\n" COLOR_RESET);
+                while (getchar() != '\n');
+                continue;
+            }
+
+            if (amount <= 0) {
+                printf(COLOR_RED "Amount must be positive!\n" COLOR_RESET);
+            } else {
+                break;
+            }
+        }
+
+        while (1) {
+            printf("Enter transaction date (dd/mm/yyyy): ");
+            scanf("%s", dateInput);
+
+            if (isValidDate(dateInput)) {
+                strcpy(accounts[found].lastTransactionDate, dateInput);
+                break;
+            } else {
+                printf(COLOR_RED "Invalid date format! Please use dd/mm/yyyy format.\n" COLOR_RESET);
+            }
+        }
+
+        accounts[found].balance += amount;
+        saveAccountsToFile();
+
+        printf(COLOR_GREEN "\nDeposit successful!\n");
+        printf("New balance: %.2f RON\n" COLOR_RESET, accounts[found].balance);
+    }
+
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void withdrawAmount() {
+    displayHeader("Withdraw Amount");
+
+    if (accountCount == 0) {
+        printf(COLOR_RED "No accounts available.\n" COLOR_RESET);
+        printf("\nPress any key to continue...");
+        getch();
+        return;
+    }
+
+    int accountNumber;
+    float amount;
+    char dateInput[11];
+
+    printf("Enter account number: ");
+    scanf("%d", &accountNumber);
+
+    int found = -1;
+    for (int i = 0; i < accountCount; i++) {
+        if (accounts[i].accountNumber == accountNumber) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found == -1) {
+        printf(COLOR_RED "Account not found!\n" COLOR_RESET);
+    } else {
+        printf(COLOR_CYAN "Account holder: %s\n", accounts[found].clientName);
+        printf("Current balance: %.2f RON\n" COLOR_RESET, accounts[found].balance);
+
+        while (1) {
+            printf("Enter amount to withdraw: ");
+            if (scanf("%f", &amount) != 1) {
+                printf(COLOR_RED "Invalid input! Please enter a number.\n" COLOR_RESET);
+                while (getchar() != '\n');
+                continue;
+            }
+
+            if (amount <= 0) {
+                printf(COLOR_RED "Amount must be positive!\n" COLOR_RESET);
+            } else if (amount > accounts[found].balance) {
+                printf(COLOR_RED "Insufficient funds! Maximum you can withdraw: %.2f RON\n" COLOR_RESET, accounts[found].balance);
+            } else {
+                break;
+            }
+        }
+
+        while (1) {
+            printf("Enter transaction date (dd/mm/yyyy): ");
+            scanf("%s", dateInput);
+
+            if (isValidDate(dateInput)) {
+                strcpy(accounts[found].lastTransactionDate, dateInput);
+                break;
+            } else {
+                printf(COLOR_RED "Invalid date format! Please use dd/mm/yyyy format.\n" COLOR_RESET);
+            }
+        }
+
+        accounts[found].balance -= amount;
+        saveAccountsToFile();
+
+        printf(COLOR_GREEN "\nWithdrawal successful!\n");
+        printf("New balance: %.2f RON\n" COLOR_RESET, accounts[found].balance);
+    }
+
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void searchAccount() {
+    displayHeader("Search Account");
+
+    if (accountCount == 0) {
+        printf(COLOR_RED "No accounts available to search.\n" COLOR_RESET);
+        printf("\nPress any key to continue...");
+        getch();
+        return;
+    }
+
+    printf("Search by:\n");
+    printf(COLOR_YELLOW "1. " COLOR_RESET "Account number\n");
+    printf(COLOR_YELLOW "2. " COLOR_RESET "Client name\n");
+    printf(COLOR_GREEN "\nSelect option: " COLOR_RESET);
+
+    char choice;
+    scanf(" %c", &choice);
+
+    if (choice == '1') {
+        int accountNumber;
+        printf("Enter account number to search: ");
+        scanf("%d", &accountNumber);
+
+        int found = 0;
+        for (int i = 0; i < accountCount; i++) {
+            if (accounts[i].accountNumber == accountNumber) {
+                printf(COLOR_GREEN "\nAccount found:\n" COLOR_RESET);
+                printf("Account number: " COLOR_YELLOW "%d\n" COLOR_RESET, accounts[i].accountNumber);
+                printf("Client name: " COLOR_GREEN "%s\n" COLOR_RESET, accounts[i].clientName);
+                printf("Balance: " COLOR_CYAN "%.2f RON\n" COLOR_RESET, accounts[i].balance);
+                printf("Last transaction: " COLOR_YELLOW "%s\n" COLOR_RESET, accounts[i].lastTransactionDate);
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found) {
+            printf(COLOR_RED "\nNo account found with number %d\n" COLOR_RESET, accountNumber);
+        }
+    } else if (choice == '2') {
+        char name[MAX_NAME_LENGTH];
+        printf("Enter client name to search: ");
+        scanf(" %[^\n]", name);
+
+        int found = 0;
+        printf(COLOR_GREEN "\nSearch results:\n" COLOR_RESET);
+
+        for (int i = 0; i < accountCount; i++) {
+            if (strstr(accounts[i].clientName, name) != NULL) {
+                printf("Account number: " COLOR_YELLOW "%d" COLOR_RESET, accounts[i].accountNumber);
+                printf(", Client: " COLOR_GREEN "%s" COLOR_RESET, accounts[i].clientName);
+                printf(", Balance: " COLOR_CYAN "%.2f RON" COLOR_RESET, accounts[i].balance);
+                printf(", Last trans: " COLOR_YELLOW "%s\n" COLOR_RESET, accounts[i].lastTransactionDate);
+                found = 1;
+            }
+        }
+
+        if (!found) {
+            printf(COLOR_RED "No accounts found for client \"%s\"\n" COLOR_RESET, name);
+        }
+    } else {
+        printf(COLOR_RED "Invalid option!\n" COLOR_RESET);
+    }
+
+    printf("\nPress any key to continue...");
+    getch();
+}
+
+void viewFileContents() {
+    displayHeader("File Contents Viewer");
+    printf(COLOR_YELLOW "File: %s\n\n" COLOR_RESET, FILENAME);
+    printf("(Close this file before continuing with the application)\n\n");
+
+    FILE *file = fopen(FILENAME, "r");
+    if (file == NULL) {
+        printf(COLOR_RED "Error opening file or file doesn't exist yet!\n" COLOR_RESET);
+    } else {
+        char line[150];
+        int lineNum = 1;
+
+        while (fgets(line, sizeof(line), file)) {
+            line[strcspn(line, "\n")] = '\0';
+
+            printf("%3d | ", lineNum++);
+
+            char *token = strtok(line, ",");
+            if (token) {
+                printf(COLOR_YELLOW "%-10s" COLOR_RESET, token);
+                printf(" | ");
+            }
+
+            token = strtok(NULL, ",");
+            if (token) {
+                printf(COLOR_GREEN "%-20s" COLOR_RESET, token);
+                printf(" | ");
+            }
+
+            token = strtok(NULL, ",");
+            if (token) {
+                printf(COLOR_CYAN "%-10s" COLOR_RESET, token);
+                printf(" | ");
+            }
+
+            token = strtok(NULL, ",");
+            if (token) {
+                printf(COLOR_YELLOW "%s" COLOR_RESET, token);
+            }
+
+            printf("\n");
+        }
+
+        fclose(file);
+    }
+
+    printf("\nPress any key to return to menu...");
+    getch();
+}
+
+int main() {
+    loadAccountsFromFile();
+
+    char choice;
+    do {
+        displayMainMenu();
+        scanf(" %c", &choice);
+
+        switch (choice) {
+            case '1':
+                displayAccounts();
+                break;
+            case '2':
+                addAccount();
+                break;
+            case '3':
+                deleteAccount();
+                break;
+            case '4':
+                depositAmount();
+                break;
+            case '5':
+                withdrawAmount();
+                break;
+            case '6':
+                searchAccount();
+                break;
+            case '7':
+                viewFileContents();
+                break;
+            case '8':
+                saveAccountsToFile();
+                printf(COLOR_GREEN "Goodbye! Data has been saved.\n" COLOR_RESET);
+                break;
+            default:
+                printf(COLOR_RED "Invalid option. Try again.\n" COLOR_RESET);
+                getch();
+                break;
+        }
+    } while (choice != '8');
+
+    return 0;
+}
